@@ -51,8 +51,8 @@ for(let i=0;i<N;i++){
 }
 
 function d2(a,b){const dx=a.x-b.x,dy=a.y-b.y;return Math.sqrt(dx*dx+dy*dy)}
-function fu(lm,pip,tip){return lm[pip].y-lm[tip].y>0.015&&d2(lm[0],lm[tip])>d2(lm[0],lm[pip])*1.005}
-function tu(lm){return Math.abs(lm[4].x-lm[3].x)>0.015&&d2(lm[0],lm[4])>d2(lm[0],lm[3])*1.005}
+function fu(lm,pip,tip){return lm[pip].y-lm[tip].y>0.008&&d2(lm[0],lm[tip])>d2(lm[0],lm[pip])*1.002}
+function tu(lm){return Math.abs(lm[4].x-lm[3].x)>0.008&&d2(lm[0],lm[4])>d2(lm[0],lm[3])*1.002}
 function dc(lm){if(!lm||lm.length<21)return-1;return[tu(lm),fu(lm,6,8),fu(lm,10,12),fu(lm,14,16),fu(lm,18,20)].filter(Boolean).length}
 function mx(nx){return(1-nx)*W} function my(ny){return ny*H}
 
@@ -83,7 +83,7 @@ function onR(r){
 async function cam(){
   if(typeof Hands==='undefined'||typeof Camera==='undefined'){camErr=true;return}
   const h=new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${f}`});
-  h.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:0.5,minTrackingConfidence:0.35});
+  h.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:0.35,minTrackingConfidence:0.2});
   h.onResults(onR);
   if(!navigator.mediaDevices?.getUserMedia){camErr=true;return}
   const c=new Camera(video,{onFrame:async()=>{if(video.readyState>=2)await h.send({image:video})},width:1280,height:720});
@@ -296,6 +296,9 @@ function render(){
   for(const p of P){if(p.state==='dead')recycle(p)}
 
   if(cnt<0){ctx.font='bold 20px "Courier New",monospace';ctx.textAlign='center';ctx.fillStyle='rgba(255,255,255,0.3)';ctx.fillText('将手放入摄像头范围',cx,cy+trg+35)}
+  // 检测调试（左上角大字）
+  ctx.font='bold 36px "Courier New",monospace';ctx.textAlign='left';
+  ctx.fillStyle='rgba(0,255,200,0.8)';ctx.fillText(`检测: ${cnt>=0?cnt:'无'} 指`,20,60);
   // 爱心/I LOVE U 进度
   if(cnt>=4){
     ctx.font='bold 16px "Courier New",monospace';ctx.textAlign='center';
