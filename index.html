@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>3D 星云</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;overflow:hidden}
+canvas{display:block;position:fixed;top:0;left:0}
+#v{display:none;filter:brightness(1.7)contrast(1.25)}
+</style>
+</head>
+<body>
+<video id="v" playsinline autoplay muted></video>
+<canvas id="c"></canvas>
+
+<script async src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js"></script>
+<script async src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js"></script>
+
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d'),video=document.getElementById('v');
+
+let W,H;
+window.addEventListener('resize',()=>{W=innerWidth;H=innerHeight;cv.width=W;cv.height=H});
+W=innerWidth;H=innerHeight;cv.width=W;cv.height=H;
+
+const N=5000, FOCAL=1000, RADII=[50,100,180,280,420,620], IDLE_R=200, LR=0.05;
+
+let cnt=-1, trg=IDLE_R, hx=null, hy=null;
+let h2x=null, h2y=null; // 第二只手（控制旋转）
+let camOk=false, camErr=false;
+let ry=0,rx=0, try_=0,trx=0, ary=0;
+
+function ry3(x,z,a){const c=Math.cos(a),s=Math.sin(a);return{x:x*c+z*s,z:-x*s+z*c}}
+function rx3(y,z,a){const c=Math.cos(a),s=Math.sin(a);return{y:y*c-z*s,z:y*s+z*c}}
+function prj(x,y,z,cx,cy){const s=FOCAL/(z+FOCAL);return{x:x*s+cx,y:y*s+cy,s}}
+
+const P=[];
+for(let i=0;i<N;i++){
+  const phi=Math.acos(2*Math.random()-1),theta=Math.random()*Math.PI*2;
+  P.push({
+    state:'bound',dx:Math.sin(phi)*Math.cos(theta),dy:Math.sin(phi)*Math.sin(theta),dz:Math.cos(phi),
+    br:Math.cbrt(Math.random()), cr:IDLE_R*Math.cbrt(Math.random()),
+    sx:0,sy:0,sr:0,sa:0,
+    h:Math.random()<0.4?30+Math.random()*35:185+Math.random()*115,
+    sz:2+Math.random()*5, al:0.6+Math.random()*0.4,
+    tr:[], ph:Math.random()*Math.PI*2, wb:0.4+Math.random()*0.6,
+    flowSpd:0, vx:0,vy:0, life:0, htx:0,hty:0,htz:0, hnx:0,hny:0,hnz:0,
+  });
+}
+
+function d2(a,b){const dx=a.x-b.x,dy=a.y-b.y;return Math.sqrt(dx*dx+dy*dy)}
+function fu(lm,pip,tip){return lm[pip].y-lm[tip].y>0.015&&d2(lm[0],lm[tip])>d2(lm[0],lm[pip])*1.005}
+function tu(lm){return Math.abs(lm[4].x-lm[3].x)>0.015&&d2(lm[0],lm[4])>d2(lm[0],lm[3])*1.005}
+function dc(lm){if(!lm||lm.length<21)return-1;return[tu(lm),fu(lm,6,8),fu(lm,10,12),fu(lm,14,16),fu(lm,18,20)].filter(Boolean).length}
+function mx(nx){return(1-nx)*W} function my(ny){return ny*H}
+
+let lost=0;
+function onR(r){
+  if(r.multiHandLandmarks?.length){
+    const lm=r.multiHandLandmarks[0];
+    let sx=0,sy=0;for(const p of lm){sx+=mx(p.x);sy+=my(p.y)}hx=sx/21;hy=sy/21;
+    const c=dc(lm);
+    if(c!==cnt&&c>=0){
+      if(c>cnt&&cnt>=0&&c>=4){triggerEscape(RADII[c]-RADII[cnt])}
+      cnt=c; trg=RADII[c];
+    }
+    // 两阶段爱心计时器：~3s爱心 → ~4s后"I LOVE U"
+    if(cnt>=4){
+      heartTimer++;
+      if(heartTimer>=ILOVEU_DELAY&&heartMode<2){heartMode=2;heartRotOff=-0.087;heartPts=genILoveU(N);for(const p of P){p.state='bound';const t=heartPts[Math.floor(Math.random()*heartPts.length)];p.htx=t.x;p.hty=t.y;p.htz=t.z;p.hnx=0;p.hny=0;p.hnz=1}}
+      else if(heartTimer>=HEART_DELAY&&heartMode<1){heartMode=1;heartRotOff=-0.087;heartPts=genHeart3D(N);for(const p of P){p.state='bound';const t=heartPts[Math.floor(Math.random()*heartPts.length)];p.htx=t.x;p.hty=t.y;p.htz=t.z;p.hnx=t.nx;p.hny=t.ny;p.hnz=t.nz}}
+    }else{heartTimer=0;heartMode=0;heartPts=[]}
+    // 第二只手控制旋转
+    if(r.multiHandLandmarks.length>=2){const lm2=r.multiHandLandmarks[1];let s2x=0,s2y=0;for(const p of lm2){s2x+=mx(p.x);s2y+=my(p.y)}h2x=s2x/21;h2y=s2y/21}else{h2x=null;h2y=null}
+    const rhx=h2x!=null?h2x:hx, rhy=h2y!=null?h2y:hy;
+    try_=(rhx/W-0.5)*Math.PI*1.2; trx=(rhy/H-0.5)*Math.PI*0.7;
+    lost=0;
+  }else{lost++;if(lost>15&&cnt!==-1){cnt=-1;trg=IDLE_R;hx=null;hy=null;h2x=null;h2y=null;heartMode=0;heartTimer=0;heartPts=[]}}
+}
+
+async function cam(){
+  if(typeof Hands==='undefined'||typeof Camera==='undefined'){camErr=true;return}
+  const h=new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${f}`});
+  h.setOptions({maxNumHands:2,modelComplexity:1,minDetectionConfidence:0.5,minTrackingConfidence:0.35});
+  h.onResults(onR);
+  if(!navigator.mediaDevices?.getUserMedia){camErr=true;return}
+  const c=new Camera(video,{onFrame:async()=>{if(video.readyState>=2)await h.send({image:video})},width:1280,height:720});
+  await c.start();camOk=true;
+}
+
+function triggerEscape(expandAmt){
+  const prob=Math.min(0.6,expandAmt/trg*0.8);
+  for(const p of P){
+    if(p.state!=='bound')continue;
+    if(p.cr>trg*0.55&&Math.random()<prob){
+      p.state='free';
+      const dx=p.sx-W/2,dy=p.sy-H/2,dist=Math.sqrt(dx*dx+dy*dy)+1;
+      const spd=4+Math.random()*10;
+      p.vx=(dx/dist)*spd+(Math.random()-0.5)*4;
+      p.vy=(dy/dist)*spd+(Math.random()-0.5)*4;
+      p.life=80+Math.floor(Math.random()*120);
+    }
+  }
+}
+
+function recycle(p){
+  p.state='bound';
+  const phi=Math.acos(2*Math.random()-1),theta=Math.random()*Math.PI*2;
+  p.dx=Math.sin(phi)*Math.cos(theta);p.dy=Math.sin(phi)*Math.sin(theta);p.dz=Math.cos(phi);
+  p.br=Math.cbrt(Math.random());p.cr=3+Math.random()*5;
+  p.flowSpd=1.5+Math.random()*4;p.vx=0;p.vy=0;p.life=0;p.tr=[];
+  p.h=Math.random()<0.4?30+Math.random()*35:185+Math.random()*115;
+  if(heartMode>=1){const t=heartPts[Math.floor(Math.random()*heartPts.length)];p.htx=t.x;p.hty=t.y;p.htz=t.z;p.hnx=t.nx||0;p.hny=t.ny||0;p.hnz=t.nz||1}
+}
+
+// ---- 3D 爱心 ----
+let heartMode=0, heartTimer=0, heartBeat=0, heartRotOff=0; // 0=无 1=爱心 2=I LOVE U
+const HEART_DELAY=80, ILOVEU_DELAY=180; // 爱心~3s, I LOVE U再~4s
+let heartPts=[]; // [{x,y,z}]
+
+/**
+ * 3D实体爱心 — 离屏canvas完美正面 + 球形截面侧面圆润
+ */
+function genHeart3D(cnt){
+  // 1. 离屏canvas画实心爱心
+  const hcv=document.createElement('canvas');hcv.width=400;hcv.height=500;
+  const hctx=hcv.getContext('2d');hctx.fillStyle='#fff';
+  hctx.beginPath();const hcx=200,hcy=250,hs=14;
+  for(let t=0;t<Math.PI*2;t+=0.02){
+    const x=hcx+hs*16*Math.pow(Math.sin(t),3);
+    const y=hcy-hs*(13*Math.cos(t)-5*Math.cos(2*t)-2*Math.cos(3*t)-Math.cos(4*t));
+    t===0?hctx.moveTo(x,y):hctx.lineTo(x,y);
+  }
+  hctx.closePath();hctx.fill();
+  const img=hctx.getImageData(0,0,400,500);
+
+  // 2. 计算每个像素到边缘的距离（用于Z厚度）
+  const w=400,h=500, distMap=new Float32Array(w*h).fill(-1);
+  // BFS从边缘向内计算距离
+  const q=[];
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    const on=img.data[(y*w+x)*4+3]>128;
+    if(on){
+      // 检查是否边缘像素（邻居有透明）
+      let edge=false;
+      for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+        const nx=x+dx,ny=y+dy;
+        if(nx<0||nx>=w||ny<0||ny>=h||img.data[(ny*w+nx)*4+3]<=128){edge=true;break}
+      }
+      if(edge){distMap[y*w+x]=0;q.push(x,y)}
+    }
+  }
+  for(let qi=0;qi<q.length;qi+=2){
+    const qx=q[qi],qy=q[qi+1], d=distMap[qy*w+qx]+1;
+    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+      const nx=qx+dx,ny=qy+dy;
+      if(nx>=0&&nx<w&&ny>=0&&ny<h&&distMap[ny*w+nx]===-1&&img.data[(ny*w+nx)*4+3]>128){
+        distMap[ny*w+nx]=d;q.push(nx,ny);
+      }
+    }
+  }
+  // 找最大距离
+  let maxD=0;
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++)if(distMap[y*w+x]>maxD)maxD=distMap[y*w+x];
+
+  // 3. 生成3D点：Z厚度=球冠 √(maxZ² - r²)，中心最厚
+  const maxZ=55, all=[];
+  for(let y=0;y<h;y+=1)for(let x=0;x<w;x+=1){
+    if(img.data[(y*w+x)*4+3]<=128)continue;
+    const dNorm=distMap[y*w+x]/Math.max(maxD,1); // 0(边缘)~1(中心)
+    const zMax=maxZ*dNorm;
+    // 在该像素位置生成多层Z深度的点
+    for(let z=-zMax;z<=zMax;z+=Math.max(2,zMax/4)){
+      // Z层的径向填充
+      const rFill=Math.sqrt(Math.max(0,zMax*zMax-z*z));
+      for(let f=0;f<2;f++){
+        const fr=Math.cbrt(Math.random())*rFill;
+        const fa=Math.random()*Math.PI*2;
+        const dx=(x-200), dy=(y-250); // 正常朝向：弧顶在上
+        all.push({
+          x:dx+Math.cos(fa)*fr,
+          y:dy+Math.sin(fa)*fr,
+          z:z+(Math.random()-0.5)*3,
+          nx:Math.cos(fa)*fr/rFill, ny:Math.sin(fa)*fr/rFill, nz:z/zMax
+        });
+      }
+    }
+  }
+  const out=[];
+  for(let i=0;i<cnt;i++)out.push(all[Math.floor(Math.random()*all.length)]);
+  return out;
+}
+
+/** 生成 "I LOVE U" 3D文字点阵 */
+function genILoveU(cnt){
+  const tcv=document.createElement('canvas');tcv.width=800;tcv.height=300;
+  const tctx=tcv.getContext('2d');
+  tctx.fillStyle='#fff';
+  tctx.font='bold 100px "Arial"';tctx.textAlign='center';tctx.textBaseline='middle';
+  tctx.fillText('I LOVE U',400,150);
+  const img=tctx.getImageData(0,0,800,300), all=[];
+  for(let y=0;y<300;y+=2)for(let x=0;x<800;x+=2){
+    if(img.data[(y*800+x)*4+3]>128) all.push({x:x-400, y:y-150});
+  }
+  const maxZ=30, pts=[];
+  for(const p of all){
+    const zScale=0.5+Math.random()*0.5;
+    for(let z=-maxZ*zScale;z<=maxZ*zScale;z+=8){
+      pts.push({x:p.x, y:p.y, z:z+(Math.random()-0.5)*5});
+    }
+  }
+  const out=[];
+  for(let i=0;i<cnt;i++) out.push(pts[Math.floor(Math.random()*pts.length)]);
+  return out;
+}
+
+function render(){
+  let cx=W/2,cy=H/2;
+  if(hx!=null){cx+=(hx-cx)*0.08;cy+=(hy-cy)*0.08}
+
+  if(hx==null){ary+=0.004;ry+=(ary-ry)*0.03;rx+=(Math.sin(ary*0.7)*0.3-rx)*0.03}
+  else{ry+=(try_-ry)*0.06;rx+=(trx-rx)*0.06}
+
+  ctx.fillStyle='#020212';ctx.fillRect(0,0,W,H);
+  if(camOk&&video.readyState>=2){ctx.save();ctx.translate(W,0);ctx.scale(-1,1);ctx.globalAlpha=0.45;ctx.drawImage(video,0,0,W,H);ctx.restore()}
+
+  const gr=trg*0.45,grd=ctx.createRadialGradient(cx,cy,0,cx,cy,gr);
+  grd.addColorStop(0,'rgba(120,180,255,0.05)');grd.addColorStop(0.5,'rgba(80,140,220,0.02)');grd.addColorStop(1,'rgba(40,80,160,0)');
+  ctx.fillStyle=grd;ctx.fillRect(cx-gr,cy-gr,gr*2,gr*2);
+
+  // 爱心跳动
+  if(heartMode){heartBeat+=0.04;}
+
+  const L=[];
+  for(const p of P){
+    if(p.state==='bound'){
+      if(heartMode>=1){
+        // ---- 3D爱心/I LOVE U：PBR光照 ----
+        const pulse=(heartMode===1)?(1+Math.sin(heartBeat)*0.06):1;
+        const tx=p.htx*pulse, ty=p.hty*pulse, tz=p.htz*pulse;
+        // 旋转法向量（加初始左转5度偏移）
+        const hry=ry+heartRotOff;
+        const nr1=ry3(p.hnx,p.hnz,hry), nr2=rx3(p.hny,nr1.z,rx);
+        const nwx=nr1.x, nwy=nr2.y, nwz=nr2.z;
+        // 旋转位置
+        const r1=ry3(tx,tz,hry), r2=rx3(ty,r1.z,rx);
+        const wx=r1.x,wy=r2.y,wz=r2.z, proj=prj(wx,wy,wz,cx,cy);
+        const dx=proj.x-p.sx, dy=proj.y-p.sy;
+        const dist=Math.sqrt(dx*dx+dy*dy);
+        if(dist>300){p.sx=proj.x;p.sy=proj.y}else{p.sx+=dx*0.15;p.sy+=dy*0.15}
+        // Lambertian光照：光源从右上角来
+        const light=Math.max(0.15, nwx*0.45 + nwy*(-0.55) + nwz*0.7);
+        // 高光：Blinn-Phong
+        const half=Math.max(0, (nwx*0.5+nwy*(-0.3)+nwz*0.8));
+        const spec=Math.pow(half, 8)*0.3;
+        p.sa=0.3 + light*0.5 + spec;
+        p.sr=p.sz*(1.0 + spec*0.8);
+        if(heartMode===1) p.h=355+Math.random()*10;
+        else p.h=340+Math.random()*20;
+        p.tr.push({x:p.sx,y:p.sy});if(p.tr.length>2)p.tr.shift();L.push({p,wz});
+      } else {
+        // ---- 球体轨道 ----
+        if(p.flowSpd>0){p.cr+=p.flowSpd;p.flowSpd*=0.985}
+        p.cr+=(trg*p.br-p.cr)*LR;if(p.cr>trg*p.br)p.flowSpd=0;
+        const n=(Math.random()-0.5)*2,r=p.cr+n;
+        const lx=p.dx*r,ly=p.dy*r,lz=p.dz*r;
+        const r1=ry3(lx,lz,ry),r2=rx3(ly,r1.z,rx);
+        const wx=r1.x,wy=r2.y,wz=r2.z,proj=prj(wx,wy,wz,cx,cy);
+        p.ph+=0.01;proj.x+=Math.sin(p.ph*p.wb)*1.0;proj.y+=Math.cos(p.ph*p.wb)*1.0;
+        p.sx=proj.x;p.sy=proj.y;
+        const dn=Math.max(0,Math.min(1,(wz+trg)/(trg*2+1)));
+        p.sa=0.2+dn*0.8;p.sr=p.sz*proj.s;
+        p.tr.push({x:proj.x,y:proj.y});if(p.tr.length>2)p.tr.shift();L.push({p,wz});
+      }
+    } else if(p.state==='free'){
+      p.vx*=0.995;p.vy*=0.995;p.vy+=0.03;
+      p.sx+=p.vx;p.sy+=p.vy;p.life--;
+      p.sr=p.sz*1.2;p.sa=Math.min(1,p.life/60);
+      if(p.sx<-150||p.sx>W+150||p.sy<-150||p.sy>H+150||p.life<=0)p.state='dead';
+      p.tr.push({x:p.sx,y:p.sy});if(p.tr.length>4)p.tr.shift();L.push({p,wz:p.sy});
+    }
+  }
+
+  L.sort((a,b)=>b.wz-a.wz);
+
+  for(const{ p }of L){
+    const x=p.sx,y=p.sy,s=Math.max(0.3,p.sr),hue=p.h,a=p.sa;
+    // 3层辉光
+    ctx.beginPath();ctx.arc(x,y,s*2.2,0,Math.PI*2);ctx.fillStyle=`hsla(${hue},100%,60%,${a*0.05})`;ctx.fill();
+    ctx.beginPath();ctx.arc(x,y,s*1.0,0,Math.PI*2);ctx.fillStyle=`hsla(${hue},100%,68%,${a*0.16})`;ctx.fill();
+    ctx.beginPath();ctx.arc(x,y,s*0.3,0,Math.PI*2);ctx.fillStyle=`hsla(${hue},15%,93%,${a*0.85})`;ctx.fill();
+  }
+
+  for(const p of P){if(p.state==='dead')recycle(p)}
+
+  if(cnt<0){ctx.font='bold 20px "Courier New",monospace';ctx.textAlign='center';ctx.fillStyle='rgba(255,255,255,0.3)';ctx.fillText('将手放入摄像头范围',cx,cy+trg+35)}
+  // 爱心/I LOVE U 进度
+  if(cnt>=4){
+    ctx.font='bold 16px "Courier New",monospace';ctx.textAlign='center';
+    if(heartMode===0){ctx.fillStyle='rgba(255,150,150,0.7)';ctx.fillText(`爱心生成中... ${Math.round(heartTimer/HEART_DELAY*100)}%`,cx,cy-trg-30)}
+    else if(heartMode===1){ctx.fillStyle='rgba(255,200,200,0.7)';ctx.fillText(`♥ 维持张开... ${Math.round((heartTimer-HEART_DELAY)/(ILOVEU_DELAY-HEART_DELAY)*100)}% -> I LOVE U`,cx,cy-trg-30)}
+    else{ctx.fillStyle='rgba(255,180,200,0.8)';ctx.fillText('I LOVE U ❤',cx,cy-trg-30)}
+  }
+  if(camErr){ctx.font='10px "Courier New",monospace';ctx.textAlign='left';ctx.fillStyle='rgba(255,120,80,0.5)';ctx.fillText('摄像头未就绪 — 星云演示',10,H-10)}
+
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+setTimeout(()=>cam(),2000);
+</script>
+</body>
+</html>
