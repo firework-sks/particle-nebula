@@ -223,8 +223,32 @@ function render(){
   if(hx==null){ary+=0.004;ry+=(ary-ry)*0.03;rx+=(Math.sin(ary*0.7)*0.3-rx)*0.03}
   else{ry+=(try_-ry)*0.06;rx+=(trx-rx)*0.06}
 
-  ctx.fillStyle='#020212';ctx.fillRect(0,0,W,H);
-  if(camOk&&video.readyState>=2){ctx.save();ctx.translate(W,0);ctx.scale(-1,1);ctx.globalAlpha=0.45;ctx.drawImage(video,0,0,W,H);ctx.restore()}
+  // 幕布背景：极暗 + 对角线光束
+  ctx.fillStyle='#04040c';ctx.fillRect(0,0,W,H);
+  ctx.save();ctx.globalCompositeOperation='lighter';
+  for(let i=0;i<3;i++){
+    const bx=(W*0.2+i*W*0.35), by=0, bw=W*0.25, bh=H;
+    const beam=ctx.createLinearGradient(bx,by,bx+bw,bh);
+    beam.addColorStop(0,`rgba(80,140,220,${0.02+i*0.01})`);beam.addColorStop(0.5,'rgba(40,80,160,0.005)');beam.addColorStop(1,'rgba(20,40,80,0)');
+    ctx.fillStyle=beam;ctx.fillRect(bx,by,bw,bh);
+  }
+  ctx.restore();
+  // 摄像头小窗（右下角）
+  if(camOk&&video.readyState>=2){
+    const pw=220, ph=160, px=W-pw-20, py=H-ph-20;
+    ctx.save();
+    // 发光边框
+    ctx.shadowBlur=20;ctx.shadowColor='rgba(0,200,255,0.5)';
+    ctx.strokeStyle='rgba(0,220,255,0.6)';ctx.lineWidth=2;
+    ctx.beginPath();ctx.roundRect(px-1,py-1,pw+2,ph+2,14);ctx.stroke();
+    ctx.shadowBlur=0;
+    // 裁剪圆角
+    ctx.beginPath();ctx.roundRect(px,py,pw,ph,12);ctx.clip();
+    // 镜像绘制
+    ctx.translate(px+pw,py);ctx.scale(-1,1);
+    ctx.drawImage(video,0,0,pw,ph);
+    ctx.restore();
+  }
 
   const gr=trg*0.45,grd=ctx.createRadialGradient(cx,cy,0,cx,cy,gr);
   grd.addColorStop(0,'rgba(120,180,255,0.05)');grd.addColorStop(0.5,'rgba(80,140,220,0.02)');grd.addColorStop(1,'rgba(40,80,160,0)');
@@ -306,7 +330,7 @@ function render(){
     else if(heartMode===1){ctx.fillStyle='rgba(255,200,200,0.7)';ctx.fillText(`♥ 维持张开... ${Math.round((heartTimer-HEART_DELAY)/(ILOVEU_DELAY-HEART_DELAY)*100)}% -> I LOVE U`,cx,cy-trg-30)}
     else{ctx.fillStyle='rgba(255,180,200,0.8)';ctx.fillText('I LOVE U ❤',cx,cy-trg-30)}
   }
-  if(camErr){ctx.font='10px "Courier New",monospace';ctx.textAlign='left';ctx.fillStyle='rgba(255,120,80,0.5)';ctx.fillText('摄像头未就绪 — 星云演示',10,H-10)}
+  if(camErr){ctx.font='10px "Courier New",monospace';ctx.textAlign='left';ctx.fillStyle='rgba(255,120,80,0.5)';ctx.fillText('摄像头未就绪',10,H-10)}
 
   requestAnimationFrame(render);
 }
